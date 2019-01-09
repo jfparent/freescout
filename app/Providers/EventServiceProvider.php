@@ -18,6 +18,7 @@ class EventServiceProvider extends ServiceProvider
         ],
 
         'Illuminate\Auth\Events\Login' => [
+            'App\Listeners\RememberUserLocale',
             'App\Listeners\LogSuccessfulLogin',
             'App\Listeners\ActivateUser',
         ],
@@ -53,13 +54,13 @@ class EventServiceProvider extends ServiceProvider
         ],
 
         'App\Events\UserCreatedConversationDraft' => [
-            
+
         ],
 
         'App\Events\UserCreatedThreadDraft' => [
-            
+
         ],
-        
+
         'App\Events\UserReplied' => [
              'App\Listeners\SendReplyToCustomer',
              'App\Listeners\SendNotificationToUsers',

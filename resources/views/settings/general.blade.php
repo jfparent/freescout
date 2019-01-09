@@ -1,4 +1,4 @@
-<form class="form-horizontal margin-top" method="POST" action="">
+<form class="form-horizontal margin-top margin-bottom" method="POST" action="">
     {{ csrf_field() }}
 
     <div class="form-group{{ $errors->has('settings[company_name]') ? ' has-error' : '' }}">
@@ -12,17 +12,21 @@
     </div>
 
     <div class="form-group{{ $errors->has('settings[next_ticket]') ? ' has-error' : '' }}">
-        <label for="next_ticket" class="col-sm-2 control-label">{{ __('Next Conversation #') }} (todo)</label>
+        <label for="next_ticket" class="col-sm-2 control-label">{{ __('Next Conversation #') }}</label>
 
         <div class="col-sm-6">
-            <input id="next_ticket" type="number" class="form-control input-sized" name="settings[next_ticket]" value="{{ old('settings[next_ticket]', $settings['next_ticket']) }}" {{--required autofocus--}}>
+            <div class="flexy">
+                <input id="next_ticket" type="number" class="form-control input-sized" name="settings[next_ticket]" value="{{ old('settings[next_ticket]', $settings['next_ticket']) }}" {{--required autofocus--}}>
+
+                <i class="glyphicon glyphicon-info-sign icon-info" data-toggle="popover" data-trigger="hover" data-placement="left" data-content="{{ __('This number is not visible to customers. It is only used to track conversations within :app_name', ['app_name' => config('app.name')]) }}"></i>
+            </div>
 
             @include('partials/field_error', ['field'=>'settings.next_ticket'])
         </div>
     </div>
 
     <div class="form-group margin-top">
-        <label for="email" class="col-sm-2 control-label">{{ __('User Permissions') }} (todo)</label>
+        <label for="email" class="col-sm-2 control-label">{{ __('User Permissions') }}</label>
 
         <div class="col-sm-6">
             @foreach (App\User::$user_permissions as $permission_id)
@@ -47,7 +51,7 @@
                     </div>
                 </div>
             </div>
-            <p class="help-block">
+            <p class="form-help">
                 {{ __('Add "Powered by :app_name" footer text to the outgoing emails to invite more developers to the project and make application better.', ['app_name' => \Config::get('app.name')]) }}
             </p>
             @include('partials/field_error', ['field'=>'settings.email_branding'])
@@ -55,7 +59,7 @@
     </div>
 
     <div class="form-group{{ $errors->has('settings[open_tracking]') ? ' has-error' : '' }}">
-        <label for="open_tracking" class="col-sm-2 control-label">{{ __('Open Tracking') }} (todo)</label>
+        <label for="open_tracking" class="col-sm-2 control-label">{{ __('Open Tracking') }}</label>
 
         <div class="col-sm-6">
             <div class="controls">
@@ -70,7 +74,7 @@
         </div>
     </div>
 
-    <div class="form-group{{ $errors->has('settings[enrich_customer_data]') ? ' has-error' : '' }}">
+    <div class="form-group{{ $errors->has('settings[enrich_customer_data]') ? ' has-error' : '' }}" style="display:none">
         <label for="enrich_customer_data" class="col-sm-2 control-label">{{ __('Enrich Customer Data') }} (todo)</label>
 
         <div class="col-sm-6">
@@ -88,17 +92,33 @@
         </div>
     </div>
 
+    <div class="form-group{{ $errors->has('settings[locale]') ? ' has-error' : '' }}">
+        <label for="locale" class="col-sm-2 control-label">{{ __('Default Language') }}</label>
+
+        <div class="col-sm-6">
+            <select id="locale" class="form-control input-sized" name="settings[locale]" required autofocus>
+                @include('partials/locale_options', ['selected' => old('settings[locale]', $settings['locale'])])
+            </select>
+
+            {{--<div class="help-block">
+                {{ __('Value is set in .env file using APP_TIMEZONE parameter.') }}
+            </div>--}}
+
+            @include('partials/field_error', ['field'=>'settings.timezone'])
+        </div>
+    </div>
+
     <div class="form-group{{ $errors->has('settings[timezone]') ? ' has-error' : '' }}">
         <label for="timezone" class="col-sm-2 control-label">{{ __('Timezone') }}</label>
 
         <div class="col-sm-6">
-            <select id="timezone" disabled="disabled" class="form-control input-sized" name="settings[timezone]" required autofocus>
+            <select id="timezone" class="form-control input-sized" name="settings[timezone]" required autofocus>
                 @include('partials/timezone_options', ['current_timezone' => old('settings[timezone]', \Config::get('app.timezone'))])
             </select>
 
-            <div class="help-block">
+            {{--<div class="help-block">
                 {{ __('Value is set in .env file using APP_TIMEZONE parameter.') }}
-            </div>
+            </div>--}}
 
             @include('partials/field_error', ['field'=>'settings.timezone'])
         </div>

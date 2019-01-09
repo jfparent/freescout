@@ -8,6 +8,10 @@
             rootUrl: '',
             routes : [
     {
+        "uri": "app-settings\/ajax",
+        "name": "settings.ajax"
+    },
+    {
         "uri": "users",
         "name": "users"
     },
@@ -32,7 +36,7 @@
         "name": "conversations.ajax_html"
     },
     {
-        "uri": "settings\/mailboxes",
+        "uri": "mailboxes",
         "name": "mailboxes"
     },
     {
@@ -42,6 +46,14 @@
     {
         "uri": "customer\/ajax-search",
         "name": "customers.ajax_search"
+    },
+    {
+        "uri": "modules\/ajax",
+        "name": "modules.ajax"
+    },
+    {
+        "uri": "system\/ajax",
+        "name": "system.ajax"
     }
 ],
             prefix: '',

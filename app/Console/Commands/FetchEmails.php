@@ -10,9 +10,10 @@ use App\Events\ConversationCustomerChanged;
 use App\Events\CustomerCreatedConversation;
 use App\Events\CustomerReplied;
 use App\Events\UserReplied;
-use App\Misc\Mail;
 use App\Mailbox;
+use App\Misc\Mail;
 use App\Option;
+use App\SendLog;
 use App\Subscription;
 use App\Thread;
 use App\User;
@@ -91,18 +92,20 @@ class FetchEmails extends Command
         // Middleware Terminate handler is not launched for commands,
         // so we need to run processing subscription events manually
         Subscription::processEvents();
+
+        $this->info('['.date('Y-m-d H:i:s').'] Fetching finished');
     }
 
     public function fetch($mailbox)
     {
         $client = new Client([
-            'host' => $mailbox->in_server,
-            'port' => $mailbox->in_port,
-            'encryption' => $mailbox->getInEncryptionName(),
+            'host'          => $mailbox->in_server,
+            'port'          => $mailbox->in_port,
+            'encryption'    => $mailbox->getInEncryptionName(),
             'validate_cert' => true,
-            'username' => $mailbox->in_username,
-            'password' => $mailbox->in_password,
-            'protocol' => $mailbox->getInProtocolName(),
+            'username'      => $mailbox->in_username,
+            'password'      => $mailbox->in_password,
+            'protocol'      => $mailbox->getInProtocolName(),
         ]);
 
         // Connect to the Server
@@ -145,7 +148,7 @@ class FetchEmails extends Command
             if ($client->getLastError()) {
                 // Throw exception for INBOX only
                 if ($folder->name == 'INBOX') {
-                    throw new Exception($client->getLastError(), 1);
+                    throw new \Exception($client->getLastError(), 1);
                 } else {
                     $this->error('['.date('Y-m-d H:i:s').'] '.$client->getLastError());
                 }
@@ -193,26 +196,100 @@ class FetchEmails extends Command
                     $in_reply_to = $message->getInReplyTo();
                     $references = $message->getReferences();
                     $attachments = $message->getAttachments();
+                    $html_body = '';
 
                     // Is it a bounce message
                     $is_bounce = false;
-                    $bounce_attachment = null;
 
-                    // Determine bounce by attachment
-                    if ($message->hasAttachments()) {
-                        foreach ($attachments as $attachment) {
-                            if (!empty(Attachment::$types[$attachment->getType()]) && Attachment::$types[$attachment->getType()] == Attachment::TYPE_MESSAGE) {
-                                if (in_array($attachment->getName(), ['RFC822', 'DELIVERY-STATUS'])) {
-                                    $is_bounce = true;
-                                    $bounce_attachment = $attachment;
+                    // Determine previous Message-ID
+                    $prev_message_id = '';
+                    if ($in_reply_to) {
+                        $prev_message_id = $in_reply_to;
+                    } elseif ($references) {
+                        if (!is_array($references)) {
+                            $references = array_filter(preg_split('/[, <>]/', $references));
+                        }
+                        // Find first non-empty reference
+                        if (is_array($references)) {
+                            foreach ($references as $reference) {
+                                if (!empty(trim($reference))) {
+                                    $prev_message_id = trim($reference);
                                     break;
                                 }
                             }
                         }
                     }
 
+                    // Some mail service providers change Message-ID of the outgoing email,
+                    // so we are passing Message-ID in marker in body.
+                    $reply_prefixes = [
+                        \MailHelper::MESSAGE_ID_PREFIX_NOTIFICATION,
+                        \MailHelper::MESSAGE_ID_PREFIX_REPLY_TO_CUSTOMER,
+                        \MailHelper::MESSAGE_ID_PREFIX_AUTO_REPLY,
+                    ];
+
+                    if (!$prev_message_id || !preg_match('/^('.implode('|', $reply_prefixes).')\-(\d+)\-/', $prev_message_id)) {
+                        // Try to get previous message ID from marker in body.
+                        $html_body = $message->getHTMLBody(false);
+                        $marker_message_id = \MailHelper::fetchMessageMarkerValue($html_body);
+
+                        if ($marker_message_id) {
+                            $prev_message_id = $marker_message_id;
+                        }
+                    }
+
+                    // Bounce detection.
+                    $bounced_message_id = null;
+                    if ($message->hasAttachments()) {
+                        // Detect bounce by attachment.
+                        // Check all attachments.
+                        foreach ($attachments as $attachment) {
+                            if (!empty(Attachment::$types[$attachment->getType()]) && Attachment::$types[$attachment->getType()] == Attachment::TYPE_MESSAGE
+                            ) {
+                                if (
+                                    // Checking the name will lead to mistakes if someone attaches a file with such name.
+                                    // Dashes are converted to space.
+                                    //in_array(strtoupper($attachment->getName()), ['RFC822', 'DELIVERY STATUS', 'DELIVERY STATUS NOTIFICATION', 'UNDELIVERED MESSAGE'])
+                                    preg_match('/delivery-status/', strtolower($attachment->content_type))
+                                    // 7.3.1 The Message/rfc822 (primary) subtype. A Content-Type of "message/rfc822" indicates that the body contains an encapsulated message, with the syntax of an RFC 822 message
+                                    //|| $attachment->content_type == 'message/rfc822'
+                                ) {
+                                    $is_bounce = true;
+
+                                    $this->line('['.date('Y-m-d H:i:s').'] Bounce detected by attachment content-type: '.$attachment->content_type);
+
+                                    // Try to get Message-ID of the original email.
+                                    if (!$bounced_message_id) {
+                                        print_r(\MailHelper::parseHeaders($attachment->getContent()));
+                                        $bounced_message_id = \MailHelper::getHeader($attachment->getContent(), 'message_id');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Check Content-Type header.
+                    if (!$is_bounce && $message->getHeader()) {
+                        if (\MailHelper::detectBounceByHeaders($message->getHeader())) {
+                            $is_bounce = true;
+                        }
+                    }
+                    // Check message's From field.
+                    if (!$is_bounce) {
+                        if ($message->getFrom()) {
+                            $original_from = $this->formatEmailList($message->getFrom());
+                            $original_from = $original_from[0];
+                            $is_bounce = preg_match('/^mailer\-daemon@/i', $original_from);
+                            $this->line('['.date('Y-m-d H:i:s').'] Bounce detected by From header: '.$original_from);
+                        }
+                    }
+                    // Check Return-Path header
+                    if (!$is_bounce && preg_match("/^Return\-Path: <>/i", $message->getHeader())) {
+                        $this->line('['.date('Y-m-d H:i:s').'] Bounce detected by Return-Path header.');
+                        $is_bounce = true;
+                    }
+
                     // Is it a message from Customer or User replied to the notification
-                    preg_match('/^'.\App\Misc\Mail::MESSAGE_ID_PREFIX_NOTIFICATION."\-(\d+)\-(\d+)\-/", $in_reply_to, $m);
+                    preg_match('/^'.\MailHelper::MESSAGE_ID_PREFIX_NOTIFICATION."\-(\d+)\-(\d+)\-/", $prev_message_id, $m);
 
                     if (!$is_bounce && !empty($m[1]) && !empty($m[2])) {
                         // Reply from User to the notification
@@ -228,7 +305,7 @@ class FetchEmails extends Command
                             continue;
                         }
                         $this->line('['.date('Y-m-d H:i:s').'] Message from: User');
-                    } elseif (!$is_bounce && ($user = User::where('email', $from)->first()) && $in_reply_to && ($prev_thread = Thread::where('message_id', $in_reply_to)->first()) && $prev_thread->created_by_user_id == $user->id) {
+                    } elseif (!$is_bounce && ($user = User::where('email', $from)->first()) && $prev_message_id && ($prev_thread = Thread::where('message_id', $prev_message_id)->first()) && $prev_thread->created_by_user_id == $user->id) {
                         // Reply from customer to his reply to the notification
                         $user_id = $user->id;
                         $message_from_customer = false;
@@ -237,29 +314,19 @@ class FetchEmails extends Command
                         // Message from Customer
                         $this->line('['.date('Y-m-d H:i:s').'] Message from: Customer');
 
-                        $prev_message_id = '';
                         if (!$is_bounce) {
-                            if ($in_reply_to) {
-                                $prev_message_id = $in_reply_to;
-                            } elseif ($references) {
-                                if (!is_array($references)) {
-                                    $references = array_filter(preg_split('/[, <>]/', $references));
-                                }
-                                // Maybe we need to check all references
-                                $prev_message_id = $references[0];
-                            }
                             if ($prev_message_id) {
                                 $prev_thread_id = '';
 
                                 // Customer replied to the email from user
-                                preg_match('/^'.\App\Misc\Mail::MESSAGE_ID_PREFIX_REPLY_TO_CUSTOMER."\-(\d+)\-/", $prev_message_id, $m);
+                                preg_match('/^'.\MailHelper::MESSAGE_ID_PREFIX_REPLY_TO_CUSTOMER."\-(\d+)\-/", $prev_message_id, $m);
                                 if (!empty($m[1])) {
                                     $prev_thread_id = $m[1];
                                 }
 
                                 // Customer replied to the auto reply
                                 if (!$prev_thread_id) {
-                                    preg_match('/^'.\App\Misc\Mail::MESSAGE_ID_PREFIX_AUTO_REPLY."\-(\d+)\-/", $prev_message_id, $m);
+                                    preg_match('/^'.\MailHelper::MESSAGE_ID_PREFIX_AUTO_REPLY."\-(\d+)\-/", $prev_message_id, $m);
                                     if (!empty($m[1])) {
                                         $prev_thread_id = $m[1];
                                     }
@@ -278,10 +345,13 @@ class FetchEmails extends Command
                         }
                     }
 
-                    if ($message->hasHTMLBody()) {
-                        // Get body and replace :cid with images URLs
-                        $body = $message->getHTMLBody(true);
-                        $body = $this->separateReply($body, true, $is_reply);
+                    // Get body
+                    if (!$html_body) {
+                        // Get body and do not replace :cid with images base64
+                        $html_body = $message->getHTMLBody(false);
+                    }
+                    if ($html_body) {
+                        $body = $this->separateReply($html_body, true, $is_reply);
                     } else {
                         $body = $message->getTextBody();
                         $body = $this->separateReply($body, false, $is_reply);
@@ -307,8 +377,33 @@ class FetchEmails extends Command
                     $emails = array_merge($message->getFrom(), $message->getReplyTo(), $message->getTo(), $message->getCc(), $message->getBcc());
                     $this->createCustomers($emails, $mailbox->getEmails());
 
+                    $data = \Eventy::filter('fetch_emails.data_to_save', [
+                        'mailbox'     => $mailbox,
+                        'message_id'  => $message_id,
+                        'prev_thread' => $prev_thread,
+                        'from'        => $from,
+                        'to'          => $to,
+                        'cc'          => $cc,
+                        'bcc'         => $bcc,
+                        'subject'     => $subject,
+                        'body'        => $body,
+                        'attachments' => $attachments,
+                        'message'     => $message,
+                        'is_bounce'   => $is_bounce,
+                        'message_from_customer' => $message_from_customer,
+                        'user'        => $user,
+                    ]);
+
+                    $new_thread = null;
                     if ($message_from_customer) {
-                        $new_thread_id = $this->saveCustomerThread($mailbox->id, $message_id, $prev_thread, $from, $to, $cc, $bcc, $subject, $body, $attachments, $message->getHeader());
+                        if (\Eventy::filter('fetch_emails.should_save_thread', true, $data) !== false) {
+                            // SendAutoReply listener will check bounce flag and will not send an auto reply if this is an auto responder.
+                            $new_thread = $this->saveCustomerThread($mailbox->id, $data['message_id'], $data['prev_thread'], $data['from'], $data['to'], $data['cc'], $data['bcc'], $data['subject'], $data['body'], $data['attachments'], $data['message']->getHeader());
+                        } else {
+                            $this->line('['.date('Y-m-d H:i:s').'] Hook fetch_emails.should_save_thread returned false. Skipping message.');
+                            $message->setFlag(['Seen']);
+                            continue;
+                        }
                     } else {
                         // Check if From is the same as user's email.
                         // If not we send an email with information to the sender.
@@ -322,12 +417,23 @@ class FetchEmails extends Command
                             continue;
                         }
 
-                        $new_thread_id = $this->saveUserThread($mailbox, $message_id, $prev_thread, $user_id, $from, $to, $cc, $bcc, $body, $attachments, $message->getHeader());
+                        if (\Eventy::filter('fetch_emails.should_save_thread', true, $data) !== false) {
+                            $new_thread = $this->saveUserThread($data['mailbox'], $data['message_id'], $data['prev_thread'], $data['user'], $data['from'], $data['to'], $data['cc'], $data['bcc'], $data['body'], $data['attachments'], $data['message']->getHeader());
+                        } else {
+                            $this->line('['.date('Y-m-d H:i:s').'] Hook fetch_emails.should_save_thread returned false. Skipping message.');
+                            $message->setFlag(['Seen']);
+                            continue;
+                        }
                     }
 
-                    if ($new_thread_id) {
+                    if ($new_thread) {
                         $message->setFlag(['Seen']);
-                        $this->line('['.date('Y-m-d H:i:s').'] Thread successfully created: '.$new_thread_id);
+                        $this->line('['.date('Y-m-d H:i:s').'] Thread successfully created: '.$new_thread->id);
+
+                        // If it was a bounce message, save bounce data.
+                        if ($message_from_customer && $is_bounce) {
+                            $this->saveBounceData($new_thread, $bounced_message_id, $from);
+                        }
                     } else {
                         $this->logError('Error occured processing message');
                     }
@@ -339,6 +445,52 @@ class FetchEmails extends Command
         }
 
         $client->disconnect();
+    }
+
+    public function saveBounceData($new_thread, $bounced_message_id, $from)
+    {
+        // Try to find bounced thread by Message-ID.
+        $bounced_thread = null;
+        if ($bounced_message_id) {
+            $prefixes = [
+                \MailHelper::MESSAGE_ID_PREFIX_REPLY_TO_CUSTOMER,
+                \MailHelper::MESSAGE_ID_PREFIX_AUTO_REPLY,
+            ];
+            preg_match('/^('.implode('|', $prefixes).')\-(\d+)\-/', $bounced_message_id, $matches);
+            if (!empty($matches[2])) {
+                $bounced_thread = Thread::find($matches[2]);
+            }
+        }
+
+        $status_data = [
+            'is_bounce' => true,
+        ];
+        if ($bounced_thread) {
+            $status_data['bounce_for_thread'] = $bounced_thread->id;
+            $status_data['bounce_for_conversation'] = $bounced_thread->conversation_id;
+        }
+
+        $new_thread->updateSendStatusData($status_data);
+        $new_thread->save();
+
+        // Update status of the original message and create log record.
+        if ($bounced_thread) {
+            $bounced_thread->send_status = SendLog::STATUS_DELIVERY_ERROR;
+
+            $status_data = [
+                'bounced_by_thread'       => $new_thread->id,
+                'bounced_by_conversation' => $new_thread->conversation_id,
+                // todo.
+                // 'bounce_info' => [
+                // ]
+            ];
+
+            $bounced_thread->updateSendStatusData($status_data);
+            $bounced_thread->save();
+
+            // Bounces can be soft and hard, for now log both as STATUS_DELIVERY_ERROR.
+            SendLog::log($bounced_thread->id, null, $from, SendLog::MAIL_TYPE_EMAIL_TO_CUSTOMER, SendLog::STATUS_DELIVERY_ERROR, $bounced_thread->created_by_customer_id, null, 'Message bounced');
+        }
     }
 
     public function logError($message)
@@ -353,7 +505,7 @@ class FetchEmails extends Command
         try {
             activity()
                 ->withProperties([
-                    'error' => $message,
+                    'error'   => $message,
                     'mailbox' => $mailbox_name,
                 ])
                 ->useLog(\App\ActivityLog::NAME_EMAILS_FETCHING)
@@ -374,6 +526,7 @@ class FetchEmails extends Command
         $prev_customer_id = null;
         $now = date('Y-m-d H:i:s');
 
+        // Customers are created before with email and name
         $customer = Customer::create($from);
         if ($prev_thread) {
             $conversation = $prev_thread->conversation;
@@ -395,15 +548,19 @@ class FetchEmails extends Command
             $conversation->state = Conversation::STATE_PUBLISHED;
             $conversation->subject = $subject;
             $conversation->setPreview($body);
-            if (count($attachments)) {
-                $conversation->has_attachments = true;
-            }
             $conversation->mailbox_id = $mailbox_id;
             $conversation->customer_id = $customer->id;
             $conversation->created_by_customer_id = $customer->id;
             $conversation->source_via = Conversation::PERSON_CUSTOMER;
             $conversation->source_type = Conversation::SOURCE_TYPE_EMAIL;
         }
+
+        // Update has_attachments only if email has attachments AND conversation hasn't has_attachments already set
+        // Prevent to set has_attachments value back to 0 if the new reply doesn't have any attachment
+        if (!$conversation->has_attachments && count($attachments)) {
+            $conversation->has_attachments = true;
+        }
+
         // Save extra recipients to CC
         $conversation->setCc(array_merge($cc, $to));
         $conversation->setBcc($bcc);
@@ -442,16 +599,22 @@ class FetchEmails extends Command
         }
         $thread->save();
 
-        $has_attachments = $this->saveAttachments($attachments, $thread->id);
-        if ($has_attachments) {
+        $saved_attachments = $this->saveAttachments($attachments, $thread->id);
+        if ($saved_attachments) {
             $thread->has_attachments = true;
+
+            // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
+            $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments);
+
             $thread->save();
         }
 
         if ($new) {
             event(new CustomerCreatedConversation($conversation, $thread));
+            \Eventy::action('conversation.created_by_customer', $conversation, $thread);
         } else {
             event(new CustomerReplied($conversation, $thread));
+            \Eventy::action('conversation.customer_replied', $conversation, $thread);
         }
 
         // Conversation customer changed
@@ -459,16 +622,17 @@ class FetchEmails extends Command
             event(new ConversationCustomerChanged($conversation, $prev_customer_id, $prev_customer_email, null, $customer));
         }
 
-        return $thread->id;
+        return $thread;
     }
 
     /**
      * Save email reply from user as thread.
      */
-    public function saveUserThread($mailbox, $message_id, $prev_thread, $user_id, $from, $to, $cc, $bcc, $body, $attachments, $headers)
+    public function saveUserThread($mailbox, $message_id, $prev_thread, $user, $from, $to, $cc, $bcc, $body, $attachments, $headers)
     {
         $conversation = null;
         $now = date('Y-m-d H:i:s');
+        $user_id = $user->id;
 
         $conversation = $prev_thread->conversation;
         // Determine assignee
@@ -480,8 +644,11 @@ class FetchEmails extends Command
         // Save extra recipients to CC
         $conversation->setCc(array_merge($cc, $to));
         $conversation->setBcc($bcc);
-        // Reply from user makes conversation pending
-        $conversation->status = Conversation::STATUS_PENDING;
+        // Respect mailbox settings for "Status After Replying
+        if ($conversation->status != $mailbox->ticket_status) {
+            \Eventy::action('conversation.status_changed_by_user', $conversation, $user, true);
+        }
+        $conversation->status = $mailbox->ticket_status;
         $conversation->last_reply_at = $now;
         $conversation->last_reply_from = Conversation::PERSON_USER;
         $conversation->user_updated_at = $now;
@@ -513,15 +680,20 @@ class FetchEmails extends Command
         $thread->created_by_user_id = $user_id;
         $thread->save();
 
-        $has_attachments = $this->saveAttachments($attachments, $thread->id);
-        if ($has_attachments) {
+        $saved_attachments = $this->saveAttachments($attachments, $thread->id);
+        if ($saved_attachments) {
             $thread->has_attachments = true;
+
+            // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
+            $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments);
+
             $thread->save();
         }
 
         event(new UserReplied($conversation, $thread));
+        \Eventy::action('conversation.user_replied', $conversation, $thread);
 
-        return $thread->id;
+        return $thread;
     }
 
     /**
@@ -534,9 +706,9 @@ class FetchEmails extends Command
      */
     public function saveAttachments($email_attachments, $thread_id)
     {
-        $has_attachments = false;
+        $created_attachments = [];
         foreach ($email_attachments as $email_attachment) {
-            $create_result = Attachment::create(
+            $created_attachment = Attachment::create(
                 $email_attachment->getName(),
                 $email_attachment->getMimeType(),
                 Attachment::typeNameToInt($email_attachment->getType()),
@@ -545,12 +717,15 @@ class FetchEmails extends Command
                 false,
                 $thread_id
             );
-            if ($create_result) {
-                $has_attachments = true;
+            if ($created_attachment) {
+                $created_attachments[] = [
+                    'imap_attachment' => $email_attachment,
+                    'attachment'      => $created_attachment,
+                ];
             }
         }
 
-        return $has_attachments;
+        return $created_attachments;
     }
 
     /**
@@ -609,6 +784,17 @@ class FetchEmails extends Command
         return $body;
     }
 
+    public function replaceCidsWithAttachmentUrls($body, $attachments)
+    {
+        foreach ($attachments as $attachment) {
+            if ($attachment['imap_attachment']->id && isset($attachment['imap_attachment']->img_src)) {
+                $body = str_replace('cid:'.$attachment['imap_attachment']->id, $attachment['attachment']->url(), $body);
+            }
+        }
+
+        return $body;
+    }
+
     /**
      * Conver email object to plain emails.
      *
@@ -652,7 +838,7 @@ class FetchEmails extends Command
     /**
      * Create customers from emails.
      *
-     * @param  array $emails_data
+     * @param array $emails_data
      */
     public function createCustomers($emails, $exclude_emails)
     {

@@ -12,7 +12,7 @@ return [
     | or any other location as required by the application or its packages.
     */
 
-    'version' => '1.0.0',
+    'version' => '1.1.6',
 
     /*
     |--------------------------------------------------------------------------
@@ -91,8 +91,15 @@ return [
     | locales: available locales
     */
 
-    'locale'  => 'en',
-    'locales' => ['en'],
+    'locale'          => env('APP_LOCALE', 'en'),
+    'locales'         => ['en', 'fr', 'it'],
+    'default_locale'  => 'en',
+
+    /*
+    | app()->setLocale() in Localize middleware also changes config('app.locale'),
+    | so we are keeping real app locale in real_locale parameter.
+    */
+   'real_locale' => env('APP_LOCALE', 'en'),
 
     /*
     |--------------------------------------------------------------------------
@@ -135,16 +142,23 @@ return [
     |
     */
 
-    'log' => env('APP_LOG', 'single'),
+    'log' => env('APP_LOG', 'daily'), // by default logs for 5 days are kept
 
-    'log_level' => env('APP_LOG_LEVEL', 'debug'),
+    'log_level' => env('APP_LOG_LEVEL', 'error'),
 
     /*
     |--------------------------------------------------------------------------
     | FreeScout website
     |-------------------------------------------------------------------------
     */
-    'freescout_url' => 'https://github.com/freescout-helpdesk/freescout',
+    'freescout_url' => 'https://freescout.net',
+
+    /*
+    |--------------------------------------------------------------------------
+    | FreeScout API
+    |-------------------------------------------------------------------------
+    */
+    'freescout_api' => 'https://freescout.net/wp-json/',
 
     /*
     |--------------------------------------------------------------------------
@@ -158,17 +172,20 @@ return [
     | FreeScout email
     |-------------------------------------------------------------------------
     */
-    'freescout_email' => 'freescout.helpdesk@gmail.com',
+    'freescout_email' => 'support@freescout.net',
 
     /*
     |--------------------------------------------------------------------------
     | Parameters used to run queued jobs processing.
-    | Checks for new jobs every 5 seconds.
-    | Do not set more than 1 retry, as it may lead to sending repeated emails if one recipient fails 
-    | and another succeeds.
+    | Checks for new jobs every --sleep seconds.
+    | If --tries is set and job fails it is being processed right away without any delay.
+    | --delay parameter does not work to set delays between retry attempts.
+    /
+    | Jobs sending emails are retried manually in handle().
+    | Number of retries is set in each job class.
     |-------------------------------------------------------------------------
     */
-    'queue_work_params' => ['--queue' => 'emails', '--sleep' => '5', '--tries' => '1'],
+    'queue_work_params' => ['--queue' => 'emails,default', '--sleep' => '5', '--tries' => '1'],
 
     /*
     |--------------------------------------------------------------------------
@@ -176,7 +193,6 @@ return [
     |-------------------------------------------------------------------------
     */
     'required_extensions' => ['mysql / mysqli', 'mbstring', 'xml', 'imap', /*'mcrypt' mcrypt is deprecated*/ 'json', 'gd', 'fileinfo', 'openssl', 'zip', 'tokenizer'/*, 'dom', 'xmlwriter', 'libxml', 'phar'*/],
-
 
     /*
     |--------------------------------------------------------------------------
@@ -188,12 +204,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Logs monitoring parameters.
+    | These settings must be stored to avoid DB query in Kenel.php
+    |-------------------------------------------------------------------------
+    */
+    'alert_logs'        => env('APP_ALERT_LOGS', false),
+    'alert_logs_period' => env('APP_ALERT_LOGS_PERIOD', ''),
+
+    /*
+    |--------------------------------------------------------------------------
+    | App colors.
+    |--------------------------------------------------------------------------
+    */
+    'colors' => [
+        'main_light'    => '#0078d7',
+        'main_dark'     => '#005a9e',
+        'note'          => '#ffc646',
+        'text_note'     => '#e6b216',
+        'text_customer' => '#8d959b',
+        'text_user'     => '#8d959b',
+        'bg_user_reply' => '#f4f8fd',
+        'bg_note'       => '#fffbf1',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Default options values for \Option::get()
     |--------------------------------------------------------------------------
     */
     'options' => [
-        'alert_fetch' => ['default' => false],
+        'alert_fetch'        => ['default' => false],
         'alert_fetch_period' => ['default' => 15], // min
+        'email_branding'     => ['default' => true],
+        'open_tracking'      => ['default' => true],
     ],
 
     /*
@@ -239,7 +282,8 @@ return [
          * Package Service Providers...
          */
         Devfactory\Minify\MinifyServiceProvider::class,
-        Barryvdh\Debugbar\ServiceProvider::class,
+        // Debugbar is enabled only if APP_DEBUG=true
+        //Barryvdh\Debugbar\ServiceProvider::class,
 
         /*
          * Application Service Providers...
@@ -250,6 +294,16 @@ return [
         App\Providers\EventServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
         App\Providers\PolycastServiceProvider::class,
+
+        /*
+         * Custom Service Providers...
+         */
+        // We can freely add or remove providers from this file.
+        // Updating will work without problems.
+
+        // Autodiscovery did not work for this one, becasuse it's composer.json
+        // does not have a `extra` section.
+        Codedge\Updater\UpdaterServiceProvider::class,
     ],
 
     /*
@@ -304,6 +358,9 @@ return [
         'Helper'       => App\Misc\Helper::class,
         'MailHelper'   => App\Misc\Mail::class,
         'Option'       => App\Option::class,
+        // Autodiscovery did not work for this one, becasuse it's composer.json
+        // does not have a `extra` section.
+        'Updater'      => Codedge\Updater\UpdaterFacade::class,
     ],
 
 ];

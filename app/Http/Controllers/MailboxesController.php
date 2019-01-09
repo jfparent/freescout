@@ -29,9 +29,9 @@ class MailboxesController extends Controller
      */
     public function mailboxes()
     {
-        $this->authorize('create', 'App\Mailbox');
-        
-        $mailboxes = Mailbox::all();
+        //$this->authorize('create', 'App\Mailbox');
+        //$mailboxes = Mailbox::all();
+        $mailboxes = auth()->user()->mailboxesCanView();
 
         return view('mailboxes/mailboxes', ['mailboxes' => $mailboxes]);
     }
@@ -88,11 +88,19 @@ class MailboxesController extends Controller
     public function update($id)
     {
         $mailbox = Mailbox::findOrFail($id);
-        $this->authorize('update', $mailbox);
+        //$this->authorize('update', $mailbox);
+        if (!auth()->user()->can('update', $mailbox)) {
+            $accessible_route = \Eventy::filter('mailbox.accessible_settings_route', '', auth()->user(), $mailbox);
+            if ($accessible_route) {
+                return redirect()->route($accessible_route, ['id' => $mailbox->id]);
+            } else {
+                \Helper::denyAccess();
+            }
+        }
 
-        $mailboxes = Mailbox::all()->except($id);
+        //$mailboxes = Mailbox::all()->except($id);
 
-        return view('mailboxes/update', ['mailbox' => $mailbox, 'mailboxes' => $mailboxes, 'flashes' => $this->mailboxActiveWarning($mailbox)]);
+        return view('mailboxes/update', ['mailbox' => $mailbox, 'flashes' => $this->mailboxActiveWarning($mailbox)]);
     }
 
     /**
@@ -110,7 +118,7 @@ class MailboxesController extends Controller
         $validator = Validator::make($request->all(), [
             'name'             => 'required|string|max:40',
             'email'            => 'required|string|email|max:128|unique:mailboxes,email,'.$id,
-            'aliases'          => 'string|max:255',
+            'aliases'          => 'nullable|string|max:255',
             'from_name'        => 'required|integer',
             'from_name_custom' => 'nullable|string|max:128',
             'ticket_status'    => 'required|integer',
@@ -207,6 +215,10 @@ class MailboxesController extends Controller
         $mailbox->fill($request->all());
         $mailbox->save();
 
+        if (!empty($request->send_test_to)) {
+            \Option::set('send_test_to', $request->send_test_to);
+        }
+
         \Session::flash('flash_success_floating', __('Connection settings saved!'));
 
         return redirect()->route('mailboxes.connection', ['id' => $id]);
@@ -300,14 +312,14 @@ class MailboxesController extends Controller
             if (Route::currentRouteName() != 'mailboxes.connection' && !$mailbox->isOutActive()) {
                 $flashes[] = [
                     'type'      => 'warning',
-                    'text'      => __('Sending emails need to be configured for the mailbox in order to send emails to customers and support agents').' (<a href="'.route('mailboxes.connection', ['id' => $mailbox->id]).'">'.__('Connection Settings » Sending Emails').'</a>)',
+                    'text'      => __('Sending emails need to be configured for the mailbox in order to send emails to customers and support agents').' ('.__('Connection Settings').' » <a href="'.route('mailboxes.connection', ['id' => $mailbox->id]).'">'.__('Sending Emails').'</a>)',
                     'unescaped' => true,
                 ];
             }
             if (Route::currentRouteName() != 'mailboxes.connection.incoming' && !$mailbox->isInActive()) {
                 $flashes[] = [
                     'type'      => 'warning',
-                    'text'      => __('Receiving emails need to be configured for the mailbox in order to fetch emails from your support email address').' (<a href="'.route('mailboxes.connection.incoming', ['id' => $mailbox->id]).'">'.__('Connection Settings » Receiving Emails').'</a>)',
+                    'text'      => __('Receiving emails need to be configured for the mailbox in order to fetch emails from your support email address').' ('.__('Connection Settings').' » <a href="'.route('mailboxes.connection.incoming', ['id' => $mailbox->id]).'">'.__('Receiving Emails').'</a>)',
                     'unescaped' => true,
                 ];
             }
@@ -329,7 +341,7 @@ class MailboxesController extends Controller
         }
 
         return view('mailboxes/auto_reply', [
-            'mailbox' => $mailbox
+            'mailbox' => $mailbox,
         ]);
     }
 
@@ -342,6 +354,10 @@ class MailboxesController extends Controller
 
         $this->authorize('update', $mailbox);
 
+        $request->merge([
+            'auto_reply_enabled'     => ($request->filled('auto_reply_enabled') ?? false),
+        ]);
+
         if ($request->auto_reply_enabled) {
             $post = $request->all();
             $post['auto_reply_message'] = strip_tags($post['auto_reply_message']);
@@ -351,8 +367,8 @@ class MailboxesController extends Controller
             ]);
             $validator->setAttributeNames([
                 'auto_reply_subject' => __('Subject'),
-                'auto_reply_message' => __('Message')
-            ]); 
+                'auto_reply_message' => __('Message'),
+            ]);
 
             if ($validator->fails()) {
                 return redirect()->route('mailboxes.auto_reply', ['id' => $id])
@@ -370,7 +386,7 @@ class MailboxesController extends Controller
         return redirect()->route('mailboxes.auto_reply', ['id' => $id]);
     }
 
-     /**
+    /**
      * Users ajax controller.
      */
     public function ajax(Request $request)
@@ -400,7 +416,7 @@ class MailboxesController extends Controller
                     $test_result = false;
 
                     try {
-                        $test_result = \App\Misc\Mail::sendTestMail($mailbox, $request->to);
+                        $test_result = \App\Misc\Mail::sendTestMail($request->to, $mailbox);
                     } catch (\Exception $e) {
                         $response['msg'] = $e->getMessage();
                     }
@@ -470,7 +486,7 @@ class MailboxesController extends Controller
                     $mailbox->users()->sync([]);
                     $mailbox->folders()->delete();
                     // Maybe remove notifications on events in this mailbox?
-                    
+
                     $mailbox->delete();
 
                     \Session::flash('flash_success_floating', __('Mailbox deleted'));

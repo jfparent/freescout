@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title_full', __('Edit Mailbox'))
+@section('title_full', __('Edit Mailbox').' - '.$mailbox->name)
 
 @section('body_attrs')@parent data-mailbox_id="{{ $mailbox->id }}"@endsection
 
@@ -46,7 +46,7 @@
 
                         <div class="col-sm-6">
                             <div class="flexy">
-                                <input id="aliases" type="text" class="form-control input-sized" name="aliases" value="{{ old('aliases', $mailbox->aliases) }}" maxlength="255" required autofocus>
+                                <input id="aliases" type="text" class="form-control input-sized" name="aliases" value="{{ old('aliases', $mailbox->aliases) }}" maxlength="255">
 
                                 <i class="glyphicon glyphicon-info-sign icon-info" data-toggle="popover" data-trigger="hover" data-html="true" data-placement="left"  data-content="{{ __('Aliases are other email addresses that also forward to your mailbox address. Separate each email with a comma.') }}"></i>
                             </div>
@@ -96,7 +96,10 @@
                         </div>
                     </div>
 
-                    <div class="form-group{{ $errors->has('template') ? ' has-error' : '' }}">
+                    @action('mailbox.update.after_ticket_status', $mailbox)
+                    
+                    {{-- Email Template option hidden until somebody needs it --}}
+                    <div class="form-group{{ $errors->has('template') ? ' has-error' : '' }}" style="display:none">
                         <label for="template" class="col-sm-2 control-label">{{ __('Email Template') }} (todo)</label>
 
                         <div class="col-sm-6">

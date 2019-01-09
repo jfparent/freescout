@@ -9,7 +9,6 @@ namespace App\Notifications;
 use App\Conversation;
 use App\Subscription;
 use App\Thread;
-use App\Channels\RealtimeBroadcastChannel;
 use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Notification;
 
@@ -34,7 +33,8 @@ class BroadcastNotification extends Notification
     /**
      * Get the notification's delivery channels.
      *
-     * @param  mixed  $user
+     * @param mixed $user
+     *
      * @return array
      */
     public function via($user)
@@ -47,7 +47,8 @@ class BroadcastNotification extends Notification
     /**
      * Get the broadcastable representation of the notification.
      *
-     * @param  mixed  $notifiable
+     * @param mixed $notifiable
+     *
      * @return BroadcastMessage
      */
     public function toBroadcast($user)
@@ -76,15 +77,16 @@ class BroadcastNotification extends Notification
         // Dummy DB notification to pass to the template
         $db_notification = new \Illuminate\Notifications\DatabaseNotification();
 
-        // HTML for the website notification
+        // HTML for the menu notification (uses same medium as for email)
         if (in_array(Subscription::MEDIUM_EMAIL, $payload->mediums)) {
-
             $web_notifications_info = [];
 
             // Get last reply or note of the conversation to display it's text
             $last_thread_body = '';
             $last_thread = Thread::where('conversation_id', $thread->conversation_id)
-                ->select(['body'])
+                // Select must contain all fields from orderBy() to avoid:
+                // General error: 3065 Expression #1 of ORDER BY clause is not in SELECT
+                ->select(['body', 'created_at'])
                 ->whereIn('type', [Thread::TYPE_CUSTOMER, Thread::TYPE_MESSAGE, Thread::TYPE_NOTE])
                 ->orderBy('created_at')
                 ->first();

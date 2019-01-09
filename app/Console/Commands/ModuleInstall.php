@@ -1,4 +1,7 @@
 <?php
+/**
+ * php artisan freescout:module-install modulealias.
+ */
 
 namespace App\Console\Commands;
 
@@ -40,6 +43,9 @@ class ModuleInstall extends Command
         $install_all = false;
         $modules = [];
 
+        // We have to clear modules cache first to update modules cache
+        $this->call('cache:clear');
+
         // Create a symlink for the module (or all modules)
         $module_alias = $this->argument('module_alias');
         if (!$module_alias) {
@@ -51,6 +57,7 @@ class ModuleInstall extends Command
             }
             if (!$modules_aliases) {
                 $this->error('No modules found');
+
                 return;
             }
             $install_all = $this->confirm('You have not specified a module alias, would you like to install all available modules ('.implode(', ', $modules_aliases).')?');
@@ -60,21 +67,23 @@ class ModuleInstall extends Command
         }
 
         if ($install_all) {
-            $this->call('module:migrate');
             foreach ($modules as $module) {
+                $this->line('Module: '.$module->getName());
+                $this->call('module:migrate', ['module' => $module->getName()]);
                 $this->createModulePublicSymlink($module);
             }
         } else {
             $module = \Module::findByAlias($module_alias);
             if (!$module) {
                 $this->error('Module with the specified alias not found: '.$module_alias);
+
                 return;
             }
-            $this->call('module:migrate "'.$module->getName().'"');
+            $this->call('module:migrate', ['module' => $module->getName(), '--force' => true]);
             $this->createModulePublicSymlink($module);
         }
-        $this->call('cache:clear');
-        $this->call('queue:restart');
+        $this->line('Clearing cache...');
+        $this->call('freescout:clear-cache');
     }
 
     public function createModulePublicSymlink($module)
@@ -85,7 +94,7 @@ class ModuleInstall extends Command
         if (file_exists($from)) {
             return $this->info('Public symlink already exists');
         }
-        
+
         try {
             symlink($to, $from);
         } catch (\Exception $e) {

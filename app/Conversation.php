@@ -3,9 +3,6 @@
 namespace App;
 
 use App\Events\ConversationCustomerChanged;
-use App\ConversationFolder;
-use App\Folder;
-use App\Thread;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Input;
 
@@ -69,7 +66,7 @@ class Conversation extends Model
      */
     public static $status_icons = [
         self::STATUS_ACTIVE  => 'flag',
-        self::STATUS_PENDING => 'hourglass',
+        self::STATUS_PENDING => 'ok',
         self::STATUS_CLOSED  => 'lock',
         self::STATUS_SPAM    => 'ban-circle',
         //self::STATUS_OPEN => 'folder-open',
@@ -84,9 +81,9 @@ class Conversation extends Model
     ];
 
     public static $status_colors = [
-        self::STATUS_ACTIVE  => '#71c171',
-        self::STATUS_PENDING => '#aaaeb7',
-        self::STATUS_CLOSED  => '#808080',
+        self::STATUS_ACTIVE  => '#6ac27b',
+        self::STATUS_PENDING => '#8b98a6',
+        self::STATUS_CLOSED  => '#6b6b6b',
         self::STATUS_SPAM    => '#de6864',
     ];
 
@@ -143,6 +140,7 @@ class Conversation extends Model
 
     /**
      * Cache of the conversations starred by user.
+     *
      * @var array
      */
     public static $starred_conversation_ids = null;
@@ -162,7 +160,18 @@ class Conversation extends Model
         parent::boot();
 
         self::creating(function (Conversation $model) {
-            $model->number = Conversation::max('number') + 1;
+            $next_ticket = (int) Option::get('next_ticket');
+            $current_number = Conversation::max('number');
+
+            if ($next_ticket) {
+                Option::remove('next_ticket');
+            }
+
+            if ($next_ticket && $next_ticket >= ($current_number + 1) && !Conversation::where('number', $next_ticket)->exists()) {
+                $model->number = $next_ticket;
+            } else {
+                $model->number = $current_number + 1;
+            }
         });
     }
 
@@ -282,6 +291,22 @@ class Conversation extends Model
     }
 
     /**
+     * Get last reply by customer or support agent.
+     *
+     * @param bool $last [description]
+     *
+     * @return [type] [description]
+     */
+    public function getLastReply()
+    {
+        return $this->threads()
+            ->whereIn('type', [Thread::TYPE_CUSTOMER, Thread::TYPE_MESSAGE])
+            ->where('state', Thread::STATE_PUBLISHED)
+            ->orderBy('created_at', 'desc')
+            ->first();
+    }
+
+    /**
      * Set preview text.
      *
      * @param string $text
@@ -313,7 +338,7 @@ class Conversation extends Model
             $title = __('Created by :person<br/>:date', ['person' => ucfirst(__(
             self::$persons[$this->source_via])), 'date' => User::dateFormat($this->created_at, 'M j, Y H:i')]);
         } else {
-            $title = __('Last reply by :person<br/>:date', ['person' => ucfirst(__(self::$persons[$this->source_via])), 'date' => User::dateFormat($this->created_at, 'M j, Y H:i')]);
+            $title = __('Last reply by :person<br/>:date', ['person' => ucfirst(__(self::$persons[$this->last_reply_from])), 'date' => User::dateFormat($this->created_at, 'M j, Y H:i')]);
         }
 
         return $title;
@@ -414,11 +439,15 @@ class Conversation extends Model
      *
      * @return Conversation
      */
-    public function getNearby($mode = 'closest')
+    public function getNearby($mode = 'closest', $folder_id = null)
     {
         $conversation = null;
 
-        $folder = $this->folder;
+        if ($folder_id) {
+            $folder = Folder::find($folder_id);
+        } else {
+            $folder = $this->folder;
+        }
         $query = self::where('folder_id', $folder->id)
             ->where('id', '<>', $this->id);
         $order_bys = $folder->getOrderByArray();
@@ -475,30 +504,32 @@ class Conversation extends Model
     /**
      * Get URL of the next conversation.
      */
-    public function urlNext()
+    public function urlNext($folder_id = null)
     {
-        $next_conversation = $this->getNearby('next');
+        $next_conversation = $this->getNearby('next', $folder_id);
         if ($next_conversation) {
             $url = $next_conversation->url();
         } else {
             // Show folder
-            $url = route('mailboxes.view.folder', ['id' => $this->mailbox_id, 'folder_id' => Conversation::getCurrentFolder($this->folder_id)]);
+            $url = route('mailboxes.view.folder', ['id' => $this->mailbox_id, 'folder_id' => self::getCurrentFolder($this->folder_id)]);
         }
+
         return $url;
     }
 
     /**
      * Get URL of the previous conversation.
      */
-    public function urlPrev()
+    public function urlPrev($folder_id = null)
     {
-        $prev_conversation = $this->getNearby('prev');
+        $prev_conversation = $this->getNearby('prev', $folder_id);
         if ($prev_conversation) {
             $url = $prev_conversation->url();
         } else {
             // Show folder
-            $url = route('mailboxes.view.folder', ['id' => $this->mailbox_id, 'folder_id' => Conversation::getCurrentFolder($this->folder_id)]);
+            $url = route('mailboxes.view.folder', ['id' => $this->mailbox_id, 'folder_id' => self::getCurrentFolder($this->folder_id)]);
         }
+
         return $url;
     }
 
@@ -674,7 +705,7 @@ class Conversation extends Model
      * For each user starred conversations are cached.
      */
     public function isStarredByUser($user_id = null)
-    {   
+    {
         if (!$user_id) {
             $user = auth()->user();
             if ($user) {
@@ -714,7 +745,7 @@ class Conversation extends Model
      */
     public static function getUserStarredConversationIds($mailbox_id, $user_id = null)
     {
-        return \Cache::rememberForever('user_starred_conversations_'.$user_id, function() use ($mailbox_id, $user_id) {
+        return \Cache::rememberForever('user_starred_conversations_'.$user_id, function () use ($mailbox_id, $user_id) {
             // Get user's folder
             $folder = Folder::select('id')
                         ->where('mailbox_id', $mailbox_id)
@@ -733,6 +764,7 @@ class Conversation extends Model
                      ])
                     ->useLog(\App\ActivityLog::NAME_SYSTEM)
                     ->log(\App\ActivityLog::DESCRIPTION_SYSTEM_ERROR);
+
                 return [];
             }
         });
@@ -769,42 +801,34 @@ class Conversation extends Model
     {
         if ($folder->type == Folder::TYPE_MINE) {
             // Get conversations from personal folder
-            $query_conversations = Conversation::where('user_id', $user_id)
+            $query_conversations = self::where('user_id', $user_id)
                 ->where('mailbox_id', $folder->mailbox_id)
-                ->whereIn('status', [Conversation::STATUS_ACTIVE, Conversation::STATUS_PENDING])
-                ->where('state', Conversation::STATE_PUBLISHED);
-
+                ->whereIn('status', [self::STATUS_ACTIVE, self::STATUS_PENDING])
+                ->where('state', self::STATE_PUBLISHED);
         } elseif ($folder->type == Folder::TYPE_ASSIGNED) {
 
             // Assigned - do not show my conversations
             $query_conversations = $folder->conversations()
                 // This condition also removes from result records with user_id = null
                 ->where('user_id', '<>', $user_id)
-                ->where('state', Conversation::STATE_PUBLISHED);
-
+                ->where('state', self::STATE_PUBLISHED);
         } elseif ($folder->type == Folder::TYPE_STARRED) {
-
-            $starred_conversation_ids = Conversation::getUserStarredConversationIds($folder->mailbox_id, $user_id);
-            $query_conversations = Conversation::whereIn('id', $starred_conversation_ids);
-
+            $starred_conversation_ids = self::getUserStarredConversationIds($folder->mailbox_id, $user_id);
+            $query_conversations = self::whereIn('id', $starred_conversation_ids);
         } elseif ($folder->isIndirect()) {
 
             // Conversations are connected to folder via conversation_folder table.
-            $query_conversations = Conversation::select('conversations.*')
+            $query_conversations = self::select('conversations.*')
                 //->where('conversations.mailbox_id', $folder->mailbox_id)
                 ->join('conversation_folder', 'conversations.id', '=', 'conversation_folder.conversation_id')
                 ->where('conversation_folder.folder_id', $folder->id);
             if ($folder->type != Folder::TYPE_DRAFTS) {
-                $query_conversations->where('state', Conversation::STATE_PUBLISHED);
+                $query_conversations->where('state', self::STATE_PUBLISHED);
             }
-
         } elseif ($folder->type == Folder::TYPE_DELETED) {
-
-            $query_conversations = $folder->conversations()->where('state', Conversation::STATE_DELETED);
-
+            $query_conversations = $folder->conversations()->where('state', self::STATE_DELETED);
         } else {
-
-            $query_conversations = $folder->conversations()->where('state', Conversation::STATE_PUBLISHED);
+            $query_conversations = $folder->conversations()->where('state', self::STATE_PUBLISHED);
         }
 
         return $query_conversations;
@@ -812,20 +836,29 @@ class Conversation extends Model
 
     /**
      * Replace vars in signature.
+     * `data` contains extra info which can be used to build signature.
      */
-    public function getSignatureProcessed()
+    public function getSignatureProcessed($data = [])
     {
         if (!\App\Misc\Mail::hasVars($this->mailbox->signature)) {
             return $this->mailbox->signature;
         }
+
+        // `user` should contain a user who replies to the conversation.
+        $user = auth()->user();
+        if (!$user && !empty($data['thread'])) {
+            $user = $data['thread']->created_by_user;
+        }
+
         $data = [
             'mailbox'      => $this->mailbox,
             'conversation' => $this,
             'customer'     => $this->customer,
+            'user'         => $user,
         ];
 
         // Set variables
-        return \App\Misc\Mail::replaceMailVars($this->mailbox->signature, $data);
+        return \MailHelper::replaceMailVars($this->mailbox->signature, $data);
     }
 
     /**
@@ -890,7 +923,6 @@ class Conversation extends Model
         }
 
         foreach ($conversations as $conversation) {
-
             if (empty($conversation->user_id)) {
                 continue;
             }
@@ -956,7 +988,7 @@ class Conversation extends Model
         }
 
         $values = [
-            'folder_id' => $folder->id,
+            'folder_id'       => $folder->id,
             'conversation_id' => $this->id,
         ];
         $folder_exists = ConversationFolder::select('id')->where($values)->first();
@@ -965,7 +997,7 @@ class Conversation extends Model
             $this->folders()->attach($folder->id);
         }
         $folder->updateCounters();
-        
+
         // updateOrCreate does not create properly with ManyToMany
         // $values = [
         //     'folder_id' => $folder->id,
@@ -999,8 +1031,10 @@ class Conversation extends Model
                         ->first();
         if (!$has_drafts) {
             $this->removeFromFolder(Folder::TYPE_DRAFTS);
+
             return true;
         }
+
         return false;
     }
 
@@ -1012,5 +1046,22 @@ class Conversation extends Model
         $this->threads->each(function ($thread, $i) {
             $thread->deleteThread();
         });
+    }
+
+    /**
+     * Get waiting since time for the conversation.
+     *
+     * @param [type] $folder [description]
+     *
+     * @return [type] [description]
+     */
+    public function getWaitingSince($folder)
+    {
+        $waiting_since_field = $folder->getWaitingSinceField();
+        if ($waiting_since_field) {
+            return \App\User::dateDiffForHumans($this->$waiting_since_field);
+        } else {
+            return '';
+        }
     }
 }

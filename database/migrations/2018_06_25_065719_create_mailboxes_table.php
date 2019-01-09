@@ -37,7 +37,7 @@ class CreateMailboxesTable extends Migration
             $table->string('in_server', 255)->nullable();
             $table->unsignedInteger('in_port')->default(143); // default IMAP port
             $table->string('in_username', 100)->nullable();
-            $table->string('in_password', 255)->nullable();
+            $table->string('in_password', 512)->nullable();
             $table->unsignedTinyInteger('in_protocol')->default(Mailbox::IN_PROTOCOL_IMAP);
             $table->unsignedTinyInteger('in_encryption')->default(Mailbox::IN_ENCRYPTION_NONE);
             $table->boolean('auto_reply_enabled')->default(false);
@@ -45,10 +45,6 @@ class CreateMailboxesTable extends Migration
             $table->text('auto_reply_message')->nullable();
             // todo
             $table->boolean('office_hours_enabled')->default(false);
-            // todo: permissions
-            // todo: custom fields
-            // todo: saved replies
-            // todo: workflows
             $table->boolean('ratings')->default(false);
             $table->unsignedTinyInteger('ratings_placement')->default(Mailbox::RATINGS_PLACEMENT_ABOVE);
             $table->text('ratings_text')->nullable();

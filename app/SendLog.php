@@ -23,13 +23,37 @@ class SendLog extends Model
     const STATUS_COMPLAINED = 9;
 
     /**
+     * Status determining successfull sending.
+     *
+     * @var [type]
+     */
+    public static $sent_success = [
+        self::STATUS_ACCEPTED,
+        self::STATUS_DELIVERY_SUCCESS,
+        self::STATUS_OPENED,
+        self::STATUS_CLICKED,
+        self::STATUS_UNSUBSCRIBED,
+        self::STATUS_COMPLAINED,
+    ];
+
+    /**
+     * Error statuses.
+     *
+     * @var [type]
+     */
+    public static $status_errors = [
+        self::STATUS_SEND_ERROR,
+        self::STATUS_DELIVERY_ERROR,
+    ];
+
+    /**
      * Mail types.
      */
     const MAIL_TYPE_EMAIL_TO_CUSTOMER = 1;
     const MAIL_TYPE_USER_NOTIFICATION = 2;
-    const MAIL_TYPE_AUTO_REPLY        = 3;
-    const MAIL_TYPE_INVITE            = 4;
-    const MAIL_TYPE_PASSWORD_CHANGED  = 5;
+    const MAIL_TYPE_AUTO_REPLY = 3;
+    const MAIL_TYPE_INVITE = 4;
+    const MAIL_TYPE_PASSWORD_CHANGED = 5;
     const MAIL_TYPE_WRONG_USER_EMAIL_MESSAGE = 6;
     const MAIL_TYPE_TEST = 7;
     const MAIL_TYPE_ALERT = 8;
@@ -113,7 +137,7 @@ class SendLog extends Model
 
     public function isErrorStatus()
     {
-        if (in_array($this->status, [self::STATUS_SEND_ERROR, self::STATUS_DELIVERY_ERROR])) {
+        if (in_array($this->status, self::$status_errors)) {
             return true;
         } else {
             return false;

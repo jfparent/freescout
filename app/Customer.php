@@ -2,7 +2,6 @@
 
 namespace App;
 
-use App\Email;
 use Illuminate\Database\Eloquent\Model;
 use Watson\Rememberable\Rememberable;
 
@@ -457,7 +456,7 @@ class Customer extends Model
      */
     public function getMainEmail()
     {
-        return $this->emails()->first()->email;
+        return optional($this->emails()->first())->email;
     }
 
     /**

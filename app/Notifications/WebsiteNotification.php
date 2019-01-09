@@ -2,6 +2,7 @@
 /**
  * Website notification (DB notification).
  */
+
 namespace App\Notifications;
 
 use App\Conversation;
@@ -28,7 +29,8 @@ class WebsiteNotification extends Notification
     /**
      * Get the notification's delivery channels.
      *
-     * @param  mixed  $user
+     * @param mixed $user
+     *
      * @return array
      */
     public function via($user)
@@ -39,13 +41,14 @@ class WebsiteNotification extends Notification
     /**
      * Get the array representation of the notification.
      *
-     * @param  mixed  $user
+     * @param mixed $user
+     *
      * @return array
      */
     public function toArray($user)
     {
         return [
-            'thread_id' => $this->thread->id,
+            'thread_id'       => $this->thread->id,
             'conversation_id' => $this->conversation->id,
         ];
     }
@@ -81,7 +84,9 @@ class WebsiteNotification extends Notification
         // Get last reply or note of the conversation to display it's text
         if ($threads) {
             $last_threads = Thread::whereIn('conversation_id', $threads->pluck('conversation_id')->unique()->toArray())
-                ->select(['id', 'conversation_id', 'body'])
+                // Select must contain all fields from orderBy() to avoid:
+                // General error: 3065 Expression #1 of ORDER BY clause is not in SELECT
+                ->select(['id', 'conversation_id', 'body', 'created_at'])
                 ->whereIn('type', [Thread::TYPE_CUSTOMER, Thread::TYPE_MESSAGE, Thread::TYPE_NOTE])
                 ->distinct('conversation_id')
                 ->orderBy('created_at')
@@ -92,7 +97,6 @@ class WebsiteNotification extends Notification
 
         // Populate all collected data into array
         foreach ($notifications as $notification) {
-
             $conversation_number = '';
             if (!empty($notification->data['number'])) {
                 $conversation_number = $notification->data['number'];

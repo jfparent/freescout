@@ -24,11 +24,12 @@ Route::post('/user-setup/{hash}', 'PublicController@userSetupSave');
 
 // General routes for logged in users
 Route::get('/', 'SecureController@dashboard')->name('dashboard');
+Route::get('/logs/app', ['uses' => '\Rap2hpoutre\LaravelLogViewer\LogViewerController@index', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('logs.app');
 Route::get('/logs/{name?}', ['uses' => 'SecureController@logs', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('logs');
 Route::post('/logs/{name?}', ['uses' => 'SecureController@logsSubmit', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']]);
-Route::get('/system', ['uses' => 'SecureController@system', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('system');
 
 // Settings
+Route::post('/app-settings/ajax', ['uses' => 'SettingsController@ajax', 'middleware' => ['auth', 'roles'], 'roles' => ['admin'], 'laroute' => true])->name('settings.ajax');
 Route::get('/app-settings/{section?}', ['uses' => 'SettingsController@view', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('settings');
 Route::post('/app-settings/{section?}', ['uses' => 'SettingsController@save', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']]);
 
@@ -58,21 +59,21 @@ Route::get('/search', 'ConversationsController@search')->name('conversations.sea
 Route::get('/conversation/undo-reply/{thread_id}', 'ConversationsController@undoReply')->name('conversations.undo');
 
 // Mailboxes
-Route::get('/settings/mailboxes', ['uses' => 'MailboxesController@mailboxes', 'laroute' => true])->name('mailboxes');
-Route::get('/settings/mailbox-new', 'MailboxesController@create')->name('mailboxes.create');
-Route::post('/settings/mailbox-new', 'MailboxesController@createSave');
-Route::get('/settings/mailbox/{id}', 'MailboxesController@update')->name('mailboxes.update');
-Route::post('/settings/mailbox/{id}', 'MailboxesController@updateSave');
-Route::get('/settings/permissions/{id}', 'MailboxesController@permissions')->name('mailboxes.permissions');
-Route::post('/settings/permissions/{id}', 'MailboxesController@permissionsSave');
+Route::get('/mailboxes', ['uses' => 'MailboxesController@mailboxes', 'laroute' => true])->name('mailboxes');
+Route::get('/mailbox/new', 'MailboxesController@create')->name('mailboxes.create');
+Route::post('/mailbox/new', 'MailboxesController@createSave');
+Route::get('/mailbox/settings/{id}', 'MailboxesController@update')->name('mailboxes.update');
+Route::post('/mailbox/settings/{id}', 'MailboxesController@updateSave');
+Route::get('/mailbox/permissions/{id}', 'MailboxesController@permissions')->name('mailboxes.permissions');
+Route::post('/mailbox/permissions/{id}', 'MailboxesController@permissionsSave');
 Route::get('/mailbox/{id}', 'MailboxesController@view')->name('mailboxes.view');
 Route::get('/mailbox/{id}/{folder_id}', 'MailboxesController@view')->name('mailboxes.view.folder');
-Route::get('/settings/connection-settings/{id}/outgoing', 'MailboxesController@connectionOutgoing')->name('mailboxes.connection');
-Route::post('/settings/connection-settings/{id}/outgoing', 'MailboxesController@connectionOutgoingSave');
-Route::get('/settings/connection-settings/{id}/incoming', 'MailboxesController@connectionIncoming')->name('mailboxes.connection.incoming');
-Route::post('/settings/connection-settings/{id}/incoming', 'MailboxesController@connectionIncomingSave');
-Route::get('/settings/mailbox/{id}/auto-reply', 'MailboxesController@autoReply')->name('mailboxes.auto_reply');
-Route::post('/settings/mailbox/{id}/auto-reply', 'MailboxesController@autoReplySave');
+Route::get('/mailbox/connection-settings/{id}/outgoing', 'MailboxesController@connectionOutgoing')->name('mailboxes.connection');
+Route::post('/mailbox/connection-settings/{id}/outgoing', 'MailboxesController@connectionOutgoingSave');
+Route::get('/mailbox/connection-settings/{id}/incoming', 'MailboxesController@connectionIncoming')->name('mailboxes.connection.incoming');
+Route::post('/mailbox/connection-settings/{id}/incoming', 'MailboxesController@connectionIncomingSave');
+Route::get('/mailbox/settings/{id}/auto-reply', 'MailboxesController@autoReply')->name('mailboxes.auto_reply');
+Route::post('/mailbox/settings/{id}/auto-reply', 'MailboxesController@autoReplySave');
 Route::post('/mailbox/ajax', ['uses' => 'MailboxesController@ajax', 'laroute' => true])->name('mailboxes.ajax');
 
 // Customers
@@ -83,3 +84,20 @@ Route::get('/customer/ajax-search', ['uses' => 'CustomersController@ajaxSearch',
 
 // Translate
 Route::post('/translations/send', ['uses' => 'TranslateController@postSend', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']]);
+Route::post('/translations/removeUnpublished', ['uses' => 'TranslateController@postRemoveUnpublished', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']]);
+Route::post('/translations/download', ['uses' => 'TranslateController@postDownload', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']]);
+
+// Modules
+// There is a /public/modules folder, so route must have a different name
+Route::get('/modules/list', ['uses' => 'ModulesController@modules', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('modules');
+Route::post('/modules/ajax', ['uses' => 'ModulesController@ajax', 'laroute' => true, 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('modules.ajax');
+
+// System
+Route::get('/system/status', ['uses' => 'SystemController@status', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('system');
+Route::get('/system/tools', ['uses' => 'SystemController@tools', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('system.tools');
+Route::post('/system/tools', ['uses' => 'SystemController@toolsExecute', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']]);
+Route::post('/system/ajax', ['uses' => 'SystemController@ajax', 'laroute' => true, 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('system.ajax');
+Route::post('/system/action', ['uses' => 'SystemController@action', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('system.action');
+
+// Open tracking
+Route::get('/thread/read/{conversation_id}/{thread_id}', 'PublicController@setThreadAsRead')->name('open_tracking.set_read');

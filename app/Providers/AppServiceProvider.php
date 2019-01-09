@@ -26,9 +26,6 @@ class AppServiceProvider extends ServiceProvider
         \App\Conversation::observe(\App\Observers\ConversationObserver::class);
         \App\Thread::observe(\App\Observers\ThreadObserver::class);
         \Illuminate\Notifications\DatabaseNotification::observe(\App\Observers\DatabaseNotificationObserver::class);
-
-        // Module functions
-        $this->registerModuleFunctions();
     }
 
     /**
@@ -45,36 +42,50 @@ class AppServiceProvider extends ServiceProvider
             $_SERVER['SERVER_PORT'] = '443';
             $this->app['url']->forceScheme('https');
         }
-    }
 
-    /**
-     * Register functions allowing modules to get/set their options.
-     */
-    public function registerModuleFunctions()
-    {
-        // At this stage class Module may be not defined yet, especially during upgrading
-        // Without this check, `php artisan cache:clear` command may fail:
-        //      In AppServiceProvider.php line XX:
-        //      Class 'Module' not found
-
-        if (!class_exists('Module')) {
-            return;
+        // If APP_KEY is not set, redirect to /install.php
+        if (!\Config::get('app.key') && !app()->runningInConsole() && !file_exists(storage_path('.installed'))) {
+            // Not defined here yet
+            //\Artisan::call("freescout:clear-cache");
+            redirect('/install.php')->send();
         }
 
-        \Module::macro('getOption', function($module_alias, $option_name, $default = false) {
-            // If not passed, get default value from config 
-            if (func_num_args() == 2) {
-                $options = \Config::get(strtolower($module_alias).'.options');
+        // Process module registration error - disable module and show error to admin
+        \Eventy::addFilter('modules.register_error', function ($exception, $module) {
 
-                if (isset($options[$option_name]) && isset($options[$option_name]['default'])) {
-                    $default = $options[$option_name]['default'];
+            // request() does is empty at this stage
+            if (!empty($_POST['action']) && $_POST['action'] == 'activate') {
+
+                // During module activation in case of any error we have to deactivate module.
+                \App\Module::deactiveModule($module->getAlias());
+
+                // if (\App::runningInConsole()) {
+                //     echo __('The plugin :module_name has been deactivated due to an error: :error_message', ['module_name' => $module->getName(), 'error_message' => $exception->getMessage()]);
+                // } else {
+                \Session::flash('flashes_floating', [[
+                    'text' => __('The plugin :module_name has been deactivated due to an error: :error_message', ['module_name' => $module->getName(), 'error_message' => $exception->getMessage()]),
+                    'type' => 'danger',
+                    'role' => \App\User::ROLE_ADMIN,
+                ]]);
+
+                return;
+            } elseif (empty($_POST)) {
+
+                // failed to open stream: No such file or directory
+                if (strstr($exception->getMessage(), 'No such file or directory')) {
+                    \App\Module::deactiveModule($module->getAlias());
+
+                    \Session::flash('flashes_floating', [[
+                        'text' => __('The plugin :module_name has been deactivated due to an error: :error_message', ['module_name' => $module->getName(), 'error_message' => $exception->getMessage()]),
+                        'type' => 'danger',
+                        'role' => \App\User::ROLE_ADMIN,
+                    ]]);
                 }
+
+                return;
             }
 
-            return \Option::get($module_alias.'.'.$option_name, $default);
-        });
-        \Module::macro('setOption', function($module_alias, $option_name, $option_value) {
-            return \Option::set(strtolower($module_alias).'.'.$option_name, $option_value);
-        });
+            return $exception;
+        }, 10, 2);
     }
 }

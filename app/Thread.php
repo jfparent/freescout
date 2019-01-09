@@ -2,7 +2,6 @@
 
 namespace App;
 
-use App\Attachment;
 use Illuminate\Database\Eloquent\Model;
 
 class Thread extends Model
@@ -139,6 +138,13 @@ class Thread extends Model
         self::SOURCE_TYPE_API   => 'api',
     ];
 
+    protected $dates = [
+        'opened_at',
+        'created_at',
+        'updated_at',
+        'deleted_at',
+    ];
+
     /**
      * The user assigned to this thread (assignedTo).
      */
@@ -213,7 +219,7 @@ class Thread extends Model
     }
 
     /**
-     * Get user who created the thread (cached)
+     * Get user who created the thread (cached).
      */
     public function created_by_user_cached()
     {
@@ -271,11 +277,12 @@ class Thread extends Model
      * Get first address from the To list.
      */
     public function getToFirst()
-    {  
+    {
         $to = $this->getToArray();
+
         return array_shift($to);
     }
-    
+
     /**
      * Get type name.
      */
@@ -421,6 +428,7 @@ class Thread extends Model
             if ($ucfirst) {
                 $name = ucfirst($name);
             }
+
             return $name;
         } else {
             // User may be deleted
@@ -438,7 +446,12 @@ class Thread extends Model
     public function getCreatedBy()
     {
         if (!empty($this->created_by_user_id)) {
-            return $this->created_by_user;
+            // User can be deleted
+            if ($this->created_by_user) {
+                return $this->created_by_user;
+            } else {
+                return \App\User::getDeletedUser();
+            }
         } else {
             return $this->created_by_customer;
         }
@@ -449,7 +462,7 @@ class Thread extends Model
      */
     public function getPerson($cached = false)
     {
-        if ($this->type == Thread::TYPE_CUSTOMER) {
+        if ($this->type == self::TYPE_CUSTOMER) {
             if ($cached) {
                 return $this->customer_cached;
             } else {
@@ -473,45 +486,46 @@ class Thread extends Model
         $did_this = '';
 
         // Person
-        if ($this->type == Thread::TYPE_CUSTOMER) {
+        $person = '';
+        if ($this->type == self::TYPE_CUSTOMER) {
             $person = $this->customer_cached->getFullName(true);
-        } elseif ($this->state == Thread::STATE_DRAFT && !empty($this->edited_by_user_id)) {
+        } elseif ($this->state == self::STATE_DRAFT && !empty($this->edited_by_user_id)) {
             // Draft
             if (auth()->user() && $this->edited_by_user_id == auth()->user()->id) {
-                $person = __("you");
+                $person = __('you');
             } else {
                 $person = $this->edited_by_user->getFullName();
             }
-        } else {
+        } elseif ($this->created_by_user_cached) {
             if ($this->created_by_user_id && auth()->user() && $this->created_by_user_cached->id == auth()->user()->id) {
-                $person = __("you");
+                $person = __('you');
             } else {
                 $person = $this->created_by_user_cached->getFullName();
             }
         }
 
         // Did this
-        if ($this->type == Thread::TYPE_LINEITEM) {
-            if ($this->action_type == Thread::ACTION_TYPE_STATUS_CHANGED) {
-                $did_this = __("marked as :status_name conversation #:conversation_number", ['status_name' => $this->getStatusName(), 'conversation_number' => $conversation_number]);
-            } elseif ($this->action_type == Thread::ACTION_TYPE_USER_CHANGED) {
-                $did_this = __("assigned :assignee convsersation #:conversation_number", ['assignee' => $this->getAssigneeName(false, null), 'conversation_number' => $conversation_number]);
-            } elseif ($this->action_type == Thread::ACTION_TYPE_CUSTOMER_CHANGED) {
-               $did_this = __("changed the customer to :customer in conversation #:conversation_number", ['customer' => $this->customer->getFullName(true), 'conversation_number' => $conversation_number]);
+        if ($this->type == self::TYPE_LINEITEM) {
+            if ($this->action_type == self::ACTION_TYPE_STATUS_CHANGED) {
+                $did_this = __('marked as :status_name conversation #:conversation_number', ['status_name' => $this->getStatusName(), 'conversation_number' => $conversation_number]);
+            } elseif ($this->action_type == self::ACTION_TYPE_USER_CHANGED) {
+                $did_this = __('assigned :assignee convsersation #:conversation_number', ['assignee' => $this->getAssigneeName(false, null), 'conversation_number' => $conversation_number]);
+            } elseif ($this->action_type == self::ACTION_TYPE_CUSTOMER_CHANGED) {
+                $did_this = __('changed the customer to :customer in conversation #:conversation_number', ['customer' => $this->customer->getFullName(true), 'conversation_number' => $conversation_number]);
             }
-        } elseif ($this->state == Thread::STATE_DRAFT) {
+        } elseif ($this->state == self::STATE_DRAFT) {
             if (empty($this->edited_by_user_id)) {
-                $did_this = __("created a draft");
+                $did_this = __('created a draft');
             } else {
                 $did_this = __("edited :creator's draft", ['creator' => $this->created_by_user_cached->getFirstName()]);
             }
-        } else {  
+        } else {
             if ($this->first) {
-                $did_this = __("started a new conversation #:conversation_number", ['conversation_number' => $conversation_number]);
-            } elseif ($this->type == Thread::TYPE_NOTE) {
-                $did_this = __("added a note to conversation #:conversation_number", ['conversation_number' => $conversation_number]);
+                $did_this = __('started a new conversation #:conversation_number', ['conversation_number' => $conversation_number]);
+            } elseif ($this->type == self::TYPE_NOTE) {
+                $did_this = __('added a note to conversation #:conversation_number', ['conversation_number' => $conversation_number]);
             } else {
-                $did_this = __("replied to conversation #:conversation_number", ['conversation_number' => $conversation_number]);
+                $did_this = __('replied to conversation #:conversation_number', ['conversation_number' => $conversation_number]);
             }
         }
 
@@ -521,10 +535,10 @@ class Thread extends Model
         }
 
         return __($description, [
-            'person' => $person,
+            'person'           => $person,
             'person_tag_start' => '<strong>',
-            'person_tag_end' => '</strong>',
-            'did_this' => $did_this
+            'person_tag_end'   => '</strong>',
+            'did_this'         => $did_this,
         ]);
     }
 
@@ -552,7 +566,7 @@ class Thread extends Model
 
     public function isDraft()
     {
-        return $this->state == Thread::STATE_DRAFT;
+        return $this->state == self::STATE_DRAFT;
     }
 
     /**
@@ -565,5 +579,169 @@ class Thread extends Model
         } else {
             return $this->body;
         }
+    }
+
+    /**
+     * Get name for the reply to customer.
+     *
+     * @param [type] $mailbox [description]
+     *
+     * @return [type] [description]
+     */
+    public function getFromName($mailbox = null)
+    {
+        // Created by customer
+        if ($this->source_via == self::PERSON_CUSTOMER) {
+            return $this->getCreatedBy()->getFirstName(true);
+        }
+
+        // Created by user
+        if (empty($mailbox)) {
+            $mailbox = $this->conversation->mailbox;
+        }
+        // Mailbox name by default
+        $name = $mailbox->name;
+
+        if ($mailbox->from_name == Mailbox::FROM_NAME_CUSTOM && $mailbox->from_name_custom) {
+            $name = $mailbox->from_name_custom;
+        } elseif ($mailbox->from_name == Mailbox::FROM_NAME_USER && $this->getCreatedBy()) {
+            $name = $this->getCreatedBy()->getFirstName(true);
+        }
+
+        return $name;
+    }
+
+    /**
+     * Check if thread is a reply from customer or user.
+     *
+     * @return bool [description]
+     */
+    public function isReply()
+    {
+        return in_array($this->type, [\App\Thread::TYPE_MESSAGE, \App\Thread::TYPE_CUSTOMER]);
+    }
+
+    /**
+     * Is this thread created from auto responder email.
+     *
+     * @return bool [description]
+     */
+    public function isAutoResponder()
+    {
+        return \MailHelper::isAutoResponder($this->headers);
+    }
+
+    /**
+     * Is thread created from incoming bounce email.
+     *
+     * @return bool [description]
+     */
+    public function isBounce()
+    {
+        if (!empty($this->getSendStatusData()['is_bounce'])) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Send status data mayb contain the following information:
+     * - bounce info (status_code, action, diagnostic_code, is_bounce, bounce_for_thread, bounce_for_conversation, bounced_by_thread, bounced_by_conversation)
+     * - send error message
+     * - click date
+     * - unsubscribe date
+     * - complain date.
+     *
+     * @return [type] [description]
+     */
+    public function getSendStatusData()
+    {
+        return \Helper::jsonToArray($this->send_status_data);
+    }
+
+    public function updateSendStatusData($new_data)
+    {
+        if ($new_data) {
+            $send_status_data = $this->getSendStatusData();
+            if ($send_status_data) {
+                $send_status_data = array_merge($send_status_data, $new_data);
+            } else {
+                $send_status_data = $new_data;
+            }
+            $this->send_status_data = json_encode($send_status_data);
+        } else {
+            $this->send_status_data = null;
+        }
+    }
+
+    public function isSendStatusError()
+    {
+        return in_array($this->send_status, \App\SendLog::$status_errors);
+    }
+
+    /**
+     * Create thread.
+     * 
+     * @param  [type] $conversation_id [description]
+     * @param  [type] $text            [description]
+     * @param  array  $data            [description]
+     * @return [type]                  [description]
+     */
+    public static function create($conversation, $type, $body, $data = [], $save = true)
+    {
+        $thread = new Thread();
+        $thread->conversation_id = $conversation->id;
+        $thread->type = $type;
+        $thread->body = $body;
+        $thread->status = $conversation->status;
+        $thread->state = Thread::STATE_PUBLISHED;
+
+        // Assigned to.
+        if (!empty($data['user_id'])) {
+            $thread->user_id = $data['user_id'];
+        }
+        if (!empty($data['message_id'])) {
+            $thread->message_id = $data['message_id'];
+        }
+        if (!empty($data['headers'])) {
+            $thread->headers = $data['headers'];
+        }
+        if (!empty($data['from'])) {
+            $thread->from = $data['from'];
+        }
+        if (!empty($data['to'])) {
+            $thread->setTo($data['to']);
+        }
+        if (!empty($data['cc'])) {
+            $thread->setCc($data['cc']);
+        }
+        if (!empty($data['bcc'])) {
+            $thread->setBcc($data['bcc']);
+        }
+        if (isset($data['first'])) {
+            $thread->from = $data['first'];
+        }
+        if (isset($data['source_via'])) {
+            $thread->source_via = $data['source_via'];
+        }
+        if (isset($data['source_type'])) {
+            $thread->source_type = $data['source_type'];
+        }
+        if (!empty($data['customer_id'])) {
+            $thread->customer_id = $data['customer_id'];
+        }
+        if (!empty($data['created_by_customer_id'])) {
+            $thread->created_by_customer_id = $data['created_by_customer_id'];
+        }
+        if (!empty($data['created_by_user_id'])) {
+            $thread->created_by_user_id = $data['created_by_user_id'];
+        }
+
+        if ($save) {
+            $thread->save();
+        }
+
+        return $thread;
     }
 }

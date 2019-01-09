@@ -30,13 +30,14 @@ class CreateConversationsTable extends Migration
             $table->string('subject', 998)->nullable();
             // Customer's email to which replies from users are sent.
             // Not used when fetching emails.
-            // Customer may have several emails, so we need to know which 
+            // Customer may have several emails, so we need to know which
             // email to use for each conversation.
             $table->string('customer_email', 191)->nullable();
             // CC and BCC store values from the last reply from customer or user
             // For incoming messages values are stored as is
             $table->text('cc')->nullable(); // JSON
             $table->text('bcc')->nullable(); // JSON
+            // Preview stores the body of the latest reply or note.
             $table->string('preview', Conversation::PREVIEW_MAXLENGTH);
             // The imported field enables conversation to be created for historical purposes
             // (i.e. if moving from a different platform, you can import your history).

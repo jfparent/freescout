@@ -12,7 +12,9 @@
     @include('partials/flash_messages')
 
     @php
-        $thread = $conversation->threads()->first();
+        if (empty($thread)) {
+            $thread = $conversation->threads()->first();
+        }
         if (!$thread) {
             $thread = new App\Thread();
         }
@@ -116,6 +118,7 @@
         </div>
     </div>
     @include('conversations/editor_bottom_toolbar', ['new_converstion' => true])
+    @action('new_conversation_form.after', $conversation)
 @endsection
 
 @include('partials/editor')

@@ -25,15 +25,38 @@ class Mail
     const MESSAGE_ID_PREFIX_AUTO_REPLY = 'autoreply';
 
     /**
-     * If reply is not extracted properly from the incoming email, add here new separator.
+     * Mail drivers.
+     */
+    const MAIL_DRIVER_MAIL = 'mail';
+    const MAIL_DRIVER_SENDMAIL = 'sendmail';
+    const MAIL_DRIVER_SMTP = 'smtp';
+
+    /**
+     * Encryptions.
+     */
+    const MAIL_ENCRYPTION_NONE = '';
+    const MAIL_ENCRYPTION_SSL = 'ssl';
+    const MAIL_ENCRYPTION_TLS = 'tls';
+
+    /**
+     * If reply is not extracted properly from the incoming email, add here a new separator.
      * Order is not important.
+     * Idially separators must contain < or > to avoid false positives.
+     * If there will be problems, convert into regular expressions.
      */
     public static $alternative_reply_separators = [
-        self::REPLY_SEPARATOR_HTML,
-        self::REPLY_SEPARATOR_TEXT,
-        '<div class="gmail_quote">',
-        '<blockquote',
+        self::REPLY_SEPARATOR_HTML, // Our HTML separator
+        self::REPLY_SEPARATOR_TEXT, // Our plain text separator
+
+        // Email service providers specific separators.
+        '<div class="gmail_quote">', // Gmail
+        'yahoo_quoted_', // Yahoo, full: <div id=3D"ydp6h4f5c59yahoo_quoted_2937493705"
+        '------------------ 原始邮件 ------------------', // QQ
+
+        // General separators.
+        '<blockquote', // General sepator
         '<!-- originalMessage -->',
+        //'---Original---', // QQ separator, wait for emails from QQ and check
     ];
 
     /**
@@ -74,9 +97,18 @@ class Mail
     {
         \Config::set('mail.driver', self::getSystemMailDriver());
         \Config::set('mail.from', [
-            'address' => self::getSystemMailFrom(), 
-            'name' => Option::get('company_name', \Config::get('app.name'))
+            'address' => self::getSystemMailFrom(),
+            'name'    => Option::get('company_name', \Config::get('app.name')),
         ]);
+
+        // SMTP
+        if (\Config::get('mail.driver') == self::MAIL_DRIVER_SMTP) {
+            \Config::set('mail.host', Option::get('mail_host'));
+            \Config::set('mail.port', Option::get('mail_port'));
+            \Config::set('mail.username', Option::get('mail_username'));
+            \Config::set('mail.password', Option::get('mail_password'));
+            \Config::set('mail.encryption', Option::get('mail_encryption'));
+        }
 
         (new \Illuminate\Mail\MailServiceProvider(app()))->register();
     }
@@ -87,18 +119,26 @@ class Mail
     public static function replaceMailVars($text, $data = [])
     {
         // Available variables to insert into email in UI.
-        $vars = [
-            '{%subject%}'             => $data['conversation']->subject,
-            '{%mailbox.email%}'       => $data['mailbox']->email,
-            '{%mailbox.name%}'        => $data['mailbox']->name,
-            '{%conversation.number%}' => $data['conversation']->number,
-            '{%customer.email%}'      => $data['conversation']->customer_email
-        ];
+        $vars = [];
 
-        if ($data['customer']) {
-            $vars['{%customer.fullName%}']  = $data['customer']->getFullName(true);
+        if (!empty($data['conversation'])) {
+            $vars['{%subject%}'] = $data['conversation']->subject;
+            $vars['{%conversation.number%}'] = $data['conversation']->number;
+            $vars['{%customer.email%}'] = $data['conversation']->customer_email;
+        }
+        if (!empty($data['mailbox'])) {
+            $vars['{%mailbox.email%}'] = $data['mailbox']->email;
+            $vars['{%mailbox.name%}'] = $data['mailbox']->name;
+        }
+        if (!empty($data['customer'])) {
+            $vars['{%customer.fullName%}'] = $data['customer']->getFullName(true);
             $vars['{%customer.firstName%}'] = $data['customer']->getFirstName(true);
-            $vars['{%customer.lastName%}']  = $data['customer']->last_name;
+            $vars['{%customer.lastName%}'] = $data['customer']->last_name;
+        }
+        if (!empty($data['user'])) {
+            $vars['{%user.fullName%}'] = $data['user']->getFullName();
+            $vars['{%user.firstName%}'] = $data['user']->getFirstName();
+            $vars['{%user.lastName%}'] = $data['user']->last_name;
         }
 
         return strtr($text, $vars);
@@ -109,7 +149,7 @@ class Mail
      */
     public static function hasVars($text)
     {
-        return preg_match("/({%|%})/", $text);
+        return preg_match('/({%|%})/', $text);
     }
 
     /**
@@ -129,6 +169,7 @@ class Mail
         if (!$mail_from) {
             $mail_from = 'freescout@'.\Helper::getDomain();
         }
+
         return $mail_from;
     }
 
@@ -143,17 +184,33 @@ class Mail
     /**
      * Send test email from mailbox.
      */
-    public static function sendTestMail($mailbox, $to)
+    public static function sendTestMail($to, $mailbox = null)
     {
-        // Configure mail driver according to Mailbox settings
-        \App\Misc\Mail::setMailDriver($mailbox);
+        if ($mailbox) {
+            // Configure mail driver according to Mailbox settings
+            \MailHelper::setMailDriver($mailbox);
 
-        $status_message = '';
-        try {
-            \Mail::to([$to])->send(new \App\Mail\Test($mailbox));
-        } catch (\Exception $e) {
-            // We come here in case SMTP server unavailable for example
-            $status_message = $e->getMessage();
+            $status_message = '';
+
+            try {
+                \Mail::to([$to])->send(new \App\Mail\Test($mailbox));
+            } catch (\Exception $e) {
+                // We come here in case SMTP server unavailable for example
+                $status_message = $e->getMessage();
+            }
+        } else {
+            // System email
+            \MailHelper::setSystemMailDriver();
+
+            $status_message = '';
+
+            try {
+                \Mail::to([['name' => '', 'email' => $to]])
+                    ->send(new \App\Mail\Test());
+            } catch (\Exception $e) {
+                // We come here in case SMTP server unavailable for example
+                $status_message = $e->getMessage();
+            }
         }
 
         if (\Mail::failures() || $status_message) {
@@ -165,6 +222,7 @@ class Mail
             }
         } else {
             SendLog::log(null, null, $to, SendLog::MAIL_TYPE_TEST, SendLog::STATUS_ACCEPTED);
+
             return true;
         }
     }
@@ -229,6 +287,18 @@ class Mail
     }
 
     /**
+     * Check if email format is valid.
+     *
+     * @param [type] $email [description]
+     *
+     * @return [type] [description]
+     */
+    public static function validateEmail($email)
+    {
+        return filter_var($email, FILTER_VALIDATE_EMAIL);
+    }
+
+    /**
      * Send system alert to super admin.
      */
     public static function sendAlertMail($text, $title = '')
@@ -242,11 +312,12 @@ class Mail
     public static function sendEmailToDevs($subject, $body, $attachments = [], $from_user = null)
     {
         // Configure mail driver according to Mailbox settings
-        \App\Misc\Mail::setSystemMailDriver();
+        \MailHelper::setSystemMailDriver();
 
         $status_message = '';
+
         try {
-            \Mail::raw($body, function($message) use ($subject, $attachments, $from_user) {
+            \Mail::raw($body, function ($message) use ($subject, $attachments, $from_user) {
                 $message
                     ->subject($subject)
                     ->to(\Config::get('app.freescout_email'));
@@ -271,5 +342,132 @@ class Mail
         } else {
             return true;
         }
+    }
+
+    /**
+     * Get email marker for the outgoing email to track replies
+     * in case Message-ID header is removed by mail service provider.
+     *
+     * @param [type] $message_id [description]
+     *
+     * @return [type] [description]
+     */
+    public static function getMessageMarker($message_id)
+    {
+        // It has to be BASE64, as Gmail converts it into link.
+        return '{#FS:'.base64_encode($message_id).'#}';
+    }
+
+    /**
+     * Fetch Message-ID from incoming email body.
+     *
+     * @param [type] $message_id [description]
+     *
+     * @return [type] [description]
+     */
+    public static function fetchMessageMarkerValue($body)
+    {
+        preg_match('/{#FS:([^#]+)#}/', $body, $matches);
+        if (!empty($matches[1]) && base64_decode($matches[1])) {
+            // Return first found marker.
+            return base64_decode($matches[1]);
+        }
+
+        return '';
+    }
+
+    /**
+     * Detect autoresponder by headers.
+     * https://github.com/jpmckinney/multi_mail/wiki/Detecting-autoresponders
+     * https://www.jitbit.com/maxblog/18-detecting-outlook-autoreplyout-of-office-emails-and-x-auto-response-suppress-header/.
+     *
+     * @return bool [description]
+     */
+    public static function isAutoResponder($headers_str)
+    {
+        $autoresponder_headers = [
+            'x-autoreply'    => '',
+            'x-autorespond'  => '',
+            'auto-submitted' => 'auto-replied',
+        ];
+        $headers = explode("\n", $headers_str);
+
+        foreach ($autoresponder_headers as $auto_header => $auto_header_value) {
+            foreach ($headers as $header) {
+                $parts = explode(':', $header, 2);
+                if (count($parts) == 2) {
+                    $name = trim(strtolower($parts[0]));
+                    $value = trim($parts[1]);
+                } else {
+                    continue;
+                }
+                if (strtolower($name) == $auto_header) {
+                    if (!$auto_header_value) {
+                        return true;
+                    } elseif ($value == $auto_header_value) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check Content-Type header.
+     * This is not 100% reliable, detects only standard DSN bounces.
+     *
+     * @param [type] $headers [description]
+     *
+     * @return [type] [description]
+     */
+    public static function detectBounceByHeaders($headers)
+    {
+        if (preg_match("/Content-Type:((?:[^\n]|\n[\t ])+)(?:\n[^\t ]|$)/i", $headers, $match)
+            && preg_match("/multipart\/report/i", $match[1])
+            && preg_match("/report-type=[\"']?delivery-status[\"']?/i", $match[1])
+        ) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Parse email headers.
+     *
+     * @param [type] $headers_str [description]
+     *
+     * @return [type] [description]
+     */
+    public static function parseHeaders($headers_str)
+    {
+        try {
+            return imap_rfc822_parse_headers($headers_str);
+        } catch (\Exception $e) {
+            return;
+        }
+    }
+
+    public static function getHeader($headers_str, $header)
+    {
+        $headers = self::parseHeaders($headers_str);
+        if (!$headers) {
+            return;
+        }
+        $value = null;
+        if (property_exists($headers, $header)) {
+            $value = $headers->$header;
+        } else {
+            return;
+        }
+        switch ($header) {
+            case 'message_id':
+                $value = str_replace(['<', '>'], '', $value);
+                break;
+        }
+
+        return $value;
     }
 }

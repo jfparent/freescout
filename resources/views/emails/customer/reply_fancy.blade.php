@@ -21,7 +21,7 @@
 						            <tr>
 						                <td style="padding:8px 0 10px 0;">
 						                    <h3 style="font-family:Arial, 'Helvetica Neue', Helvetica, Tahoma, sans-serif; color:#727272; font-size:16px; line-height:22px; margin:0; font-weight:normal;">
-						                    	<strong style="color:#000000;">{{ $thread->getCreatedBy()->getFirstName(true) }}</strong> @if ($loop->last){{ __('sent a message') }}@else {{ __('replied') }}@endif
+						                    	<strong style="color:#000000;">{{ $thread->getFromName($mailbox) }}</strong> @if ($loop->last){{ __('sent a message') }}@else {{ __('replied') }}@endif
 						                	</h3>
 
 						                    @if ($thread->getCcArray())
@@ -41,13 +41,12 @@
 						                        <div style="font-family:Arial, 'Helvetica Neue', Helvetica, Tahoma, sans-serif; color: #232323; font-size:13px; line-height:19px; margin:0;">
 					                                {!! $thread->body !!}
 
-					                                {{-- todo: Satisfaction ratings --}}
-					                                {{--<br><br>How would you rate my reply?<br><a href="" style="color:#50bc1c;">Great</a> &nbsp;&nbsp; <a href="" style="color:#555555;">Okay</a> &nbsp;&nbsp; <a href="" style="color:#f10000;">Not Good</a>
-					                                --}}
+					                                @action('reply_email.before_signature', $thread, $loop, $threads, $conversation, $mailbox)
 					                                @if ($thread->source_via == App\Thread::PERSON_USER)
-						                                <br>{!! $conversation->getSignatureProcessed() !!}
-						                                <br><br>
+						                                <br>{!! $conversation->getSignatureProcessed(['thread' => $thread]) !!}
 						                            @endif
+						                            @action('reply_email.after_signature', $thread, $loop, $threads, $conversation, $mailbox)
+						                            <br><br>
 	                                            </div>
 	                                        </div>
 						                </td>
@@ -69,14 +68,15 @@
 							</td>
 						</tr>
 					@endif
-	                <tr>
-	                    <td height="0" style="font-size: 0px; line-height: 0px; color:#ffffff;">
-	                    	{{-- todo: view tracking --}}
-	                        {{--<img src="" alt="" />
-	                        <div style="font-size: 0px; line-height: 0px; color:#ffffff !important; display:none;">{#FS:123-123#}</div>
-	                    	--}}
-	                    </td>
-	                </tr>
+					<tr>
+						<td height="0" style="font-size: 0px; line-height: 0px; color:#ffffff;">	                    	
+							@if (\App\Option::get('open_tracking'))
+								<img src="{{ route('open_tracking.set_read', ['conversation_id' => $threads->first()->conversation_id, 'thread_id' => $threads->first()->id]) }}/" alt="" />
+							@endif
+							{{-- Addition to Message-ID header to detect relies --}}
+							<div style="font-size: 0px; line-height: 0px; color:#ffffff !important; display:none;">{{ \MailHelper::getMessageMarker($headers['Message-ID']) }}</div>
+						</td>
+					</tr>
 	            </table>
 	        </td>
 	    </tr>
