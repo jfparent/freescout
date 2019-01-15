@@ -7,7 +7,9 @@ $baseDir = dirname($vendorDir);
 
 return array(
     'Rap2hpoutre\\LaravelLogViewer\\' => array($vendorDir . '/rap2hpoutre/laravel-log-viewer/src'),
+    'Prophecy\\' => array($vendorDir . '/phpspec/prophecy/src'),
     'Parsedown' => array($vendorDir . '/erusev/parsedown'),
+    'Mockery' => array($vendorDir . '/mockery/mockery/library'),
     'JShrink' => array($vendorDir . '/tedivm/jshrink/src'),
     'HTMLPurifier' => array($vendorDir . '/ezyang/htmlpurifier/library'),
     'Doctrine\\DBAL\\' => array($vendorDir . '/doctrine/dbal/lib'),
